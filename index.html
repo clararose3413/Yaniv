@@ -15,7 +15,8 @@ input::placeholder{color:#fbf6e999}
 .btn.alt{background:transparent;color:var(--ivory);border:2px solid #ffffff55}
 .btn:disabled{opacity:.45}
 .row{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap}
-.card{width:50px;height:72px;margin:3px;padding:0;border:0;border-radius:8px;background:var(--ivory);color:var(--ink);font:700 20px Georgia,serif;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.05;box-shadow:0 2px 0 #0006;transition:transform .12s}
+.card{width:50px;height:72px;margin:3px;padding:0;border:0;border-radius:8px;background:var(--ivory);color:var(--ink);font:700 20px Georgia,serif;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.05;box-shadow:0 2px 0 #0006;position:relative;will-change:transform}
+.card:active{filter:brightness(.92)}
 .card i{font-style:normal;font-size:22px}.card.red{color:var(--red)}
 .card.sel{transform:translateY(-14px);outline:3px solid var(--gold)}
 .card.take{outline:3px solid var(--gold)}
@@ -31,7 +32,8 @@ input::placeholder{color:#fbf6e999}
 .hand{display:flex;justify-content:center;flex-wrap:wrap;padding-top:16px}
 .tot{text-align:center;opacity:.8;margin:4px 0 10px}
 .toast{position:fixed;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));max-width:456px;margin:auto;background:#7a1f1a;padding:12px 14px;border-radius:10px;text-align:center;font-weight:700}
-.over{position:fixed;inset:0;background:#000000cc;overflow:auto;padding:16px}
+.over{position:fixed;inset:0;background:#000000cc;overflow:auto;padding:16px;animation:fade .2s}
+@keyframes fade{from{opacity:0}}
 .over>div{max-width:480px;margin:auto}
 table{width:100%;border-collapse:collapse;margin:10px 0}td{padding:8px 4px;border-bottom:1px solid #ffffff25;vertical-align:middle}
 .code{font-size:46px;letter-spacing:8px;text-align:center;margin:10px 0}
@@ -50,7 +52,7 @@ async function api(a){
 function connect(){
   if(es)es.close(); let got=false;
   es=new EventSource(`/events?room=${ses.room}&id=${ses.id}`);
-  es.onmessage=e=>{got=true;S=JSON.parse(e.data);sel=new Set([...sel].filter(id=>S.me.hand.some(c=>c.id===id)));render()};
+  es.onmessage=e=>{got=true;const old=S,b=snap();S=JSON.parse(e.data);sel=new Set([...sel].filter(id=>S.me.hand.some(c=>c.id===id)));render();fx(b,old)};
   es.onerror=()=>{if(!got){es.close();localStorage.removeItem('yaniv');ses=null;S=null;render()}};
 }
 const card=(c,cls='')=>{const red=c.s==='♥'||c.s==='♦';return c.r?`<button class="card ${red?'red':''} ${cls}" data-id="${c.id}">${LB[c.r]}<i>${c.s}</i></button>`:`<button class="card ${cls}" data-id="${c.id}">Joker</button>`};
@@ -59,12 +61,13 @@ const tot=h=>h.reduce((t,c)=>t+Math.min(c.r,10),0);
 function render(){
   if(!S){
     const q=new URLSearchParams(location.search).get('salle')||'';
-    app.innerHTML=`<h1>Yaniv</h1><p class="sub">À deux, chacun sur son téléphone</p>
+    app.innerHTML=`<h1>Yaniv</h1><p class="sub">Contre l'ordinateur ou à plusieurs</p>
     <input id="nom" placeholder="Ton prénom" maxlength="16" value="${localStorage.getItem('nom')||''}">
-    <button class="btn" data-a="create">Créer une partie</button>
-    <p class="sub" style="margin:18px 0 4px">ou rejoindre avec un code</p>
-    <input id="code" placeholder="Code (4 lettres)" maxlength="4" value="${q}" style="text-transform:uppercase;text-align:center;letter-spacing:6px">
-    <button class="btn alt" data-a="join">Rejoindre</button>`;return}
+    <button class="btn" data-a="solo">Jouer contre l'ordinateur</button>
+    <p class="sub" style="margin:24px 0 4px">Jouer à plusieurs, chacun sur son téléphone</p>
+    <button class="btn alt" data-a="create">Créer une partie</button>
+    <input id="code" placeholder="Code reçu (4 lettres)" maxlength="4" value="${q}" style="text-transform:uppercase;text-align:center;letter-spacing:6px">
+    <button class="btn alt" data-a="join">Rejoindre la partie</button>`;return}
   if(S.phase==='lobby'){
     const lien=location.origin+'/?salle='+S.room;
     app.innerHTML=`<h1>Salon</h1><p class="sub">Donne ce code à l'autre joueur</p><div class="code">${S.room}</div>
@@ -74,12 +77,12 @@ function render(){
   const hand=[...S.me.hand].sort((a,b)=>a.r-b.r||a.s.localeCompare(b.s));
   const others=S.players.filter(p=>!p.me);
   app.innerHTML=`<div class="bar">${S.players.map(p=>`<div class="pl ${p.turn?'turn':''}"><b>${p.me?'Toi':p.name}</b>${p.score} pts${p.me?'':' · '+p.count+' cartes'}</div>`).join('')}</div>
-  <div class="row">${others.map(p=>Array.from({length:p.count},()=>'<span class="card back"></span>').join('')).join('<span style="width:14px"></span>')}</div>
+  <div class="row opp" style="min-height:58px">${others.map(p=>Array.from({length:p.count},()=>'<span class="card back"></span>').join('')).join('<span style="width:14px"></span>')}</div>
   <div class="table">
     <div><button class="card back" data-deck="1" style="width:60px;height:86px;${S.myTurn?'outline:3px solid var(--gold)':''}"></button><small>Pioche (${S.deck})</small></div>
     <div><div class="row" style="flex-wrap:nowrap">${S.pile.map(c=>card(c,'mini '+(S.takeable.includes(c.id)&&S.myTurn?'take':'dim')).replace('data-id','data-pile="1" data-id')).join('')}</div><small>Défausse</small></div>
   </div>
-  <div class="log">${S.myTurn?'<b>À toi de jouer</b> — choisis tes cartes, puis touche la pioche ou une carte de la défausse':S.log}</div>
+  <div class="log">${S.myTurn?'<b>À toi de jouer</b> — choisis tes cartes, puis touche la pioche ou une carte de la défausse':S.log+'<br><small>Tour de '+(S.players.find(p=>p.turn)||{name:''}).name+'…</small>'}</div>
   <div class="hand">${hand.map(c=>card(c,sel.has(c.id)?'sel':'')).join('')}</div>
   <div class="tot">Ta main : ${tot(hand)} point${tot(hand)>1?'s':''}</div>
   ${S.canYaniv?'<button class="btn" data-a="yaniv">Yaniv !</button>':''}
@@ -93,12 +96,57 @@ function resultat(){
   ${fin?`<h2 style="text-align:center">${r.loser} dépasse 200 points<br>${r.winner} gagne la partie !</h2>`:''}
   <button class="btn" data-a="ready" ${pret?'disabled':''}>${pret?'En attente de l\'autre joueur…':fin?'Rejouer':'Manche suivante'}</button></div></div>`;
 }
+
+// ---------- Animations (rapides, fluides : transformations GPU) ----------
+const calme=matchMedia('(prefers-reduced-motion: reduce)').matches, EASE='cubic-bezier(.22,.8,.3,1)';
+function snap(){
+  const rects={},html={},pile=[];
+  app.querySelectorAll('[data-id]').forEach(e=>{if(e.closest('.over'))return;rects[e.dataset.id]=e.getBoundingClientRect();html[e.dataset.id]=e.outerHTML;if(e.dataset.pile)pile.push(e.dataset.id)});
+  const d=app.querySelector('[data-deck]'),o=app.querySelector('.opp');
+  return{rects,html,pile,deck:d&&d.getBoundingClientRect(),opp:o&&o.getBoundingClientRect()};
+}
+function glide(el,from,dur){            // l'élément glisse de sa position précédente vers sa position actuelle
+  const to=el.getBoundingClientRect();if(!to.width||!from)return;
+  const dx=from.left-to.left,dy=from.top-to.top,sx=from.width/to.width,sy=from.height/to.height;
+  if(Math.abs(dx)<1&&Math.abs(dy)<1&&Math.abs(sx-1)<.02)return;
+  const end=getComputedStyle(el).transform,e=end==='none'?'':' '+end;
+  el.style.transformOrigin='0 0';el.style.zIndex=5;
+  const a=el.animate([{transform:`translate(${dx}px,${dy}px) scale(${sx},${sy})${e}`},{transform:end==='none'?'none':end}],{duration:dur,easing:EASE});
+  a.onfinish=a.oncancel=()=>{el.style.transformOrigin='';el.style.zIndex=''};
+}
+function ghost(html,from,to,dur,scale,fade){   // copie qui s'envole vers l'adversaire (ou s'efface)
+  if(!from||!to)return;
+  const g=document.createElement('div');
+  g.style.cssText=`position:fixed;left:${from.left}px;top:${from.top}px;width:${from.width}px;height:${from.height}px;z-index:30;pointer-events:none`;
+  g.innerHTML=html;const c=g.firstElementChild;if(c)c.style.margin='0';document.body.appendChild(g);
+  const dx=fade?0:to.left+to.width/2-(from.left+from.width/2),dy=fade?0:to.top+to.height/2-(from.top+from.height/2);
+  g.animate([{transform:'none',opacity:1},{transform:`translate(${dx}px,${dy}px) scale(${scale})`,opacity:fade?0:.2}],{duration:dur,easing:EASE}).onfinish=()=>g.remove();
+}
+function fx(b,old){
+  if(calme||!old||old.phase==='lobby'&&S.phase==='lobby')return;
+  const ev=S.ev,fresh=!!(ev&&(!old.ev||ev.n>old.ev.n)),dur=fresh?300:130;
+  const opp=app.querySelector('.opp')?.getBoundingClientRect();
+  const src=b.opp&&{left:b.opp.left+b.opp.width/2-18,top:b.opp.top,width:36,height:52};   // la main de l'adversaire
+  app.querySelectorAll('[data-id]').forEach(el=>{
+    if(el.closest('.over'))return;
+    const r=b.rects[el.dataset.id];
+    if(r)glide(el,r,dur);
+    else if(fresh&&el.closest('.hand'))glide(el,b.deck,dur);          // ma carte piochée vient de la pioche
+    else if(fresh&&el.dataset.pile)glide(el,src,dur);                 // cartes posées par l'adversaire
+  });
+  if(!fresh)return;
+  b.pile.forEach(id=>{                                                 // ancienne défausse
+    if(String(ev.took)===id){if(!ev.mine)ghost(b.html[id],b.rects[id],opp,dur,.7);}      // prise par l'adversaire
+    else if(!app.querySelector(`[data-id="${id}"]`))ghost(b.html[id],b.rects[id],null,dur,1,true); // sinon elle s'efface
+  });
+  if(ev.took==='deck'&&!ev.mine)ghost('<span class="card back" style="width:60px;height:86px"></span>',b.deck,opp,dur,.6);
+}
 app.addEventListener('click',async e=>{
   const b=e.target.closest('button'); if(!b)return;
-  if(b.dataset.a==='create'||b.dataset.a==='join'){
+  if(['create','join','solo'].includes(b.dataset.a)){
     const nom=$('#nom').value.trim(); if(!nom)return toast('Entre ton prénom');
     localStorage.setItem('nom',nom);
-    const j=await api({action:b.dataset.a,name:nom,room:$('#code').value,id:undefined}); if(!j)return;
+    const j=await api({action:b.dataset.a==='solo'?'create':b.dataset.a,solo:b.dataset.a==='solo',name:nom,room:$('#code').value,id:undefined}); if(!j)return;
     ses={room:j.room,id:j.id};localStorage.setItem('yaniv',JSON.stringify(ses));history.replaceState(null,'','/');connect();return}
   if(b.dataset.a==='share'){const l=b.dataset.l;if(navigator.share)navigator.share({title:'Yaniv',text:'Rejoins ma partie de Yaniv !',url:l}).catch(()=>{});else{navigator.clipboard&&navigator.clipboard.writeText(l);toast('Lien copié')}return}
   if(b.dataset.a){const j=await api({action:b.dataset.a==='yaniv'?'play':b.dataset.a,type:b.dataset.a==='yaniv'?'yaniv':undefined});return}
