@@ -41,16 +41,18 @@ function addPlayer(R, name) {
   const p = { id: crypto.randomBytes(8).toString('hex'), name: String(name || 'Joueur').trim().slice(0, 16) || 'Joueur', hand: [], score: 0, ready: false, res: null };
   R.players.push(p); return p;
 }
-function createRoom(name) {
+function createRoom(name, solo) {
   let code; do code = Array.from({ length: 4 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random() * 24)]).join(''); while (rooms[code]);
-  const R = { code, players: [], phase: 'lobby', starter: 0, turn: 0, deck: [], dead: [], pile: null, log: '', result: null, t: Date.now() };
-  rooms[code] = R; return { R, p: addPlayer(R, name) };
+  const R = { code, players: [], phase: 'lobby', starter: 0, turn: 0, deck: [], dead: [], pile: null, log: '', result: null, ev: null, evn: 0, timer: null, t: Date.now() };
+  rooms[code] = R; const p = addPlayer(R, name);
+  if (solo) { const b = addPlayer(R, 'Ordinateur'); b.bot = true; startGame(R); }
+  return { R, p };
 }
 function startRound(R) {
   R.deck = newDeck(); R.dead = [];
   R.players.forEach(p => { p.hand = R.deck.splice(0, 5); p.ready = false; });
   R.pile = { cards: [R.deck.pop()], run: false };
-  R.phase = 'play'; R.result = null; R.turn = R.starter; R.log = 'Nouvelle manche';
+  R.phase = 'play'; R.result = null; R.ev = null; R.turn = R.starter; R.log = 'Nouvelle manche';
 }
 function startGame(R) {
   if (R.phase !== 'lobby') throw 'La partie a déjà commencé';
@@ -71,7 +73,7 @@ function endRound(R, caller) {
   const over = R.players.some(p => p.score > LOSE);
   const sorted = [...R.players].sort((a, b) => a.score - b.score);
   R.result = { caller: caller.name, callerTotal: ct, assaf, rows, over, winner: over ? sorted[0].name : null, loser: over ? sorted[sorted.length - 1].name : null };
-  R.phase = over ? 'over' : 'roundEnd';
+  R.phase = over ? 'over' : 'roundEnd'; R.ev = null;
   R.players.forEach(p => p.ready = false);
 }
 function act(R, p, a) {
@@ -98,6 +100,7 @@ function act(R, p, a) {
   p.hand = p.hand.filter(c => !cs.includes(c)); p.hand.push(taken);
   R.pile = { cards: set, run: isRun(set) };
   R.log = `${p.name} pose ${set.map(show).join(' ')} et prend ${from}`;
+  R.ev = { n: ++R.evn, by: p, set: set.map(c => c.id), took: a.take === 'deck' ? 'deck' : taken.id };
   R.turn = (R.turn + 1) % R.players.length;
 }
 function ready(R, p) {
@@ -114,14 +117,37 @@ function view(R, p) {
     room: R.code, phase: R.phase, myTurn, deck: R.deck.length, log: R.log, result: R.result, max: MAX,
     me: { name: p.name, hand: p.hand, score: p.score, host: R.players[0] === p, ready: p.ready },
     players: R.players.map((q, i) => ({ name: q.name, count: q.hand.length, score: q.score, turn: R.phase === 'play' && i === R.turn, ready: q.ready, me: q === p })),
+    ev: R.ev ? { n: R.ev.n, mine: R.ev.by === p, took: R.ev.took, set: R.ev.set } : null,
     pile: R.pile ? R.pile.cards : [], takeable: takeable(R.pile), canYaniv: myTurn && total(p.hand) <= MAX,
   };
 }
 const send = (R, p) => { if (p.res) p.res.write(`data: ${JSON.stringify(view(R, p))}\n\n`); };
-const broadcast = R => R.players.forEach(p => send(R, p));
+const broadcast = R => { botCheck(R); R.players.forEach(p => send(R, p)); };
+
+// Ordinateur (mode solo) : il pose ses cartes les plus lourdes et prend une carte basse si elle est dans la défausse
+function botPlay(R) {
+  const b = R.players[R.turn];
+  if (R.phase !== 'play' || !b || !b.bot) return;
+  if (total(b.hand) <= MAX && (total(b.hand) <= 4 || Math.random() < 0.8)) return act(R, b, { type: 'yaniv' });
+  let best = null, bs = -1e9;
+  for (let m = 1; m < 1 << b.hand.length; m++) {
+    const cs = b.hand.filter((_, i) => m >> i & 1);
+    if (!arrange(cs)) continue;
+    const sc = cs.reduce((t, c) => t + val(c), 0) + cs.length * 0.1 - 4 * cs.filter(c => !c.r).length;
+    if (sc > bs) { bs = sc; best = cs; }
+  }
+  const ok = takeable(R.pile), low = R.pile.cards.filter(c => ok.includes(c.id)).sort((x, y) => val(x) - val(y))[0];
+  act(R, b, { type: 'play', cards: best.map(c => c.id), take: low && val(low) <= 3 ? low.id : 'deck' });
+}
+function botCheck(R) {
+  const b = R.players.find(p => p.bot); if (!b) return;
+  if ((R.phase === 'roundEnd' || R.phase === 'over') && !b.ready) ready(R, b);
+  if (R.phase === 'play' && R.players[R.turn] === b && !R.timer)
+    R.timer = setTimeout(() => { R.timer = null; try { botPlay(R); } catch (e) { console.error(e); } broadcast(R); }, 1000 + Math.random() * 500);
+}
 
 function handle(a) {
-  if (a.action === 'create') { const { R, p } = createRoom(a.name); broadcast(R); return { room: R.code, id: p.id }; }
+  if (a.action === 'create') { const { R, p } = createRoom(a.name, !!a.solo); broadcast(R); return { room: R.code, id: p.id }; }
   if (a.action === 'join') {
     const R = rooms[String(a.room || '').trim().toUpperCase()]; if (!R) throw 'Salon introuvable : vérifie le code';
     const p = addPlayer(R, a.name); broadcast(R); return { room: R.code, id: p.id };
@@ -165,4 +191,4 @@ const server = http.createServer((req, res) => {
 setInterval(() => { for (const c in rooms) { rooms[c].players.forEach(p => p.res && p.res.write(':\n\n')); if (Date.now() - rooms[c].t > 6 * 3600e3) delete rooms[c]; } }, 25000).unref();
 
 if (require.main === module) server.listen(PORT, () => console.log('Yaniv prêt sur http://localhost:' + PORT));
-module.exports = { server, rooms, arrange, total, createRoom, addPlayer, startGame, act, ready, takeable, view, MAX, BONUS };
+module.exports = { server, rooms, botPlay, arrange, total, createRoom, addPlayer, startGame, act, ready, takeable, view, MAX, BONUS };
